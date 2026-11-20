@@ -506,7 +506,7 @@ def cut_session(sdir, a):
         tmp = Path(tmp)
         brand = None
         if not a.no_brand:
-            brand = clipper.make_brand(a.title, a.handle, tmp / "brand.png", a.reframe)
+            brand = clipper.make_brand(a.handle, tmp / "brand.png", a.reframe)
         for i, m in enumerate(chosen, 1):
             if sm is not None and m["peak"] < len(sm) and not m.get("visual_only"):
                 clip = clipper.plan_clip(m["peak"], sm, total, segments,
@@ -548,9 +548,9 @@ def main():
                    help="Gemini model for --gemini-review")
     p.add_argument("--rubric-weights",
                    help='JSON weight overrides, e.g. {"hook":0.25,"intensity":0.25}')
-    p.add_argument("--title", help="title shown at the top of each clip")
-    p.add_argument("--handle", default="Json", help="channel name shown at the bottom")
-    p.add_argument("--no-brand", action="store_true", help="no title or channel name overlay")
+    p.add_argument("--handle", default="@gtasixviralclips",
+                   help="Instagram/channel handle shown at the bottom")
+    p.add_argument("--no-brand", action="store_true", help="don't show the bottom handle")
     p.add_argument("--model", default="base", help="whisper model: tiny/base/small")
     p.add_argument("--lang", default="en", help="speech language code, or 'auto'")
     p.add_argument("--no-transcribe", action="store_true", help="skip live transcription")

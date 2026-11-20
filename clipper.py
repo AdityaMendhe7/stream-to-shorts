@@ -771,46 +771,13 @@ def make_captions(segments, start, end, outdir, layout="fit"):
     return lst
 
 
-def _wrap(text, font, max_w):
-    lines, cur = [], ""
-    for w in text.split():
-        t = (cur + " " + w).strip()
-        if font.getlength(t) <= max_w or not cur:
-            cur = t
-        else:
-            lines.append(cur)
-            cur = w
-    if cur:
-        lines.append(cur)
-    return lines
-
-
-def make_brand(title, handle, path, layout="fit"):
-    """Full-frame transparent overlay: a title pill at the top, your channel name at the bottom."""
+def make_brand(handle, path, layout="fit"):
+    """Full-frame transparent overlay with the channel handle at the bottom."""
     Image, ImageDraw = _pil()
     img = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    top = 40 if layout == "stack" else 110
-    if title:
-        size = 56
-        while True:
-            font = _font(size)
-            lines = _wrap(title.upper(), font, 900)
-            if len(lines) <= 2 or size <= 34:
-                break
-            size -= 4
-        lines = lines[:2]
-        if len(lines) == 2 and font.getlength(lines[1]) > 900:
-            lines[1] = lines[1][:28].rstrip() + "…"
-        line_h = size * 1.25
-        w = max(font.getlength(ln) for ln in lines) + 70
-        h = line_h * len(lines) + 34
-        x0 = (1080 - w) / 2
-        d.rounded_rectangle([x0, top, x0 + w, top + h], radius=34, fill=(0, 0, 0, 170))
-        for i, ln in enumerate(lines):
-            d.text((540, top + 17 + line_h * (i + 0.5)), ln, font=font, fill="white", anchor="mm")
     if handle:
-        d.text((540, 1885 if layout == "stack" else 1855), handle.upper(), font=_font(42),
+        d.text((540, 1885 if layout == "stack" else 1855), handle, font=_font(42),
                fill="white", anchor="mm", stroke_width=5, stroke_fill="black")
     img.save(path)
     return path
@@ -899,10 +866,6 @@ def parse_cam(text):
                  "for a facecam in the bottom-right corner")
 
 
-def pretty_title(stem):
-    return re.sub(r"[_\-]+", " ", stem).strip()[:70]
-
-
 def main():
     t_start = time.time()
     p = argparse.ArgumentParser(description="Auto-clip hype moments into vertical clips.")
@@ -919,9 +882,9 @@ def main():
     p.add_argument("--cam", help="facecam area as x:y:w:h fractions of the frame (for stack)")
     p.add_argument("--crop-x", type=float, default=0.5,
                    help="horizontal crop anchor from 0 (left) to 1 (right), for --reframe crop")
-    p.add_argument("--title", help="title shown at the top (default: the video's name)")
-    p.add_argument("--handle", default="Json", help="channel name shown at the bottom")
-    p.add_argument("--no-brand", action="store_true", help="no title or channel name overlay")
+    p.add_argument("--handle", default="@gtasixviralclips",
+                   help="Instagram/channel handle shown at the bottom")
+    p.add_argument("--no-brand", action="store_true", help="don't show the bottom handle")
     p.add_argument("--model", default="base", help="whisper model: tiny/base/small/medium")
     p.add_argument("--lang", default="en", help="speech language code, or 'auto'")
     p.add_argument("--no-transcribe", action="store_true", help="audio-only, no captions")
@@ -1066,8 +1029,7 @@ def main():
 
         brand = None
         if not a.no_brand:
-            brand = make_brand(a.title or pretty_title(video.stem), a.handle,
-                               tmp / "brand.png", a.reframe)
+            brand = make_brand(a.handle, tmp / "brand.png", a.reframe)
 
         clips = []
         for i, m in enumerate(moments, 1):

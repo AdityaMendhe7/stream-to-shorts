@@ -6,6 +6,8 @@ This project finds gameplay moments using separate audio/chat/transcript signals
 
 Rendered clips are 1080×1920 (9:16), H.264/AAC MP4. `fit` is the safe default and preserves the full input frame over a blurred background. If a separate facecam is present, `stack` can show the gameplay and facecam together; pass its rectangle as normalized `x:y:w:h` fractions. `crop` fills the portrait frame and can be shifted horizontally with `--crop-x` from 0 (left) to 1 (right).
 
+The video title is not overlaid. The bottom handle defaults to `@gtasixviralclips`; override it with `--handle` if needed.
+
 Examples:
 
 ```bash
