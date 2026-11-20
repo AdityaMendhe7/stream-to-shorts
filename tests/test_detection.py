@@ -1,8 +1,10 @@
 import json
+import os
 import sys
 import types
 
 import numpy as np
+import pytest
 
 import clipper
 
@@ -74,6 +76,68 @@ def test_plan_clip_keeps_boundaries_inside_source_and_length_limits():
     assert 6 <= clip["end"] - clip["start"] <= 10
 
 
+def test_cache_key_uses_video_content_not_size_or_mtime(tmp_path):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"first")
+    original_mtime = video.stat().st_mtime_ns
+    path, cache = clipper.cache_load(video)
+    cache["sentinel"] = "same-content"
+    clipper.cache_save(path, cache)
+
+    _, cached = clipper.cache_load(video)
+    assert cached["sentinel"] == "same-content"
+
+    video.write_bytes(b"other")
+    os.utime(video, ns=(video.stat().st_atime_ns, original_mtime))
+    _, refreshed = clipper.cache_load(video)
+    assert "sentinel" not in refreshed
+
+
+def test_parse_cam_rejects_invalid_or_out_of_frame_rectangles():
+    for value in ("bad", "0.8:0.8:0.3:0.3", "0:0:0:0.5", "nan:0:0.2:0.2"):
+        with pytest.raises(SystemExit, match="--cam must be x:y:w:h"):
+            clipper.parse_cam(value)
+
+
+def test_missing_ffmpeg_reports_install_hint(monkeypatch):
+    monkeypatch.setattr(clipper.shutil, "which", lambda tool: None)
+
+    with pytest.raises(SystemExit, match="Install FFmpeg"):
+        clipper.need("ffmpeg")
+
+
+def test_dry_run_writes_candidates_without_rendering(monkeypatch, tmp_path):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"synthetic-video")
+    output = tmp_path / "clips"
+    loudness = np.zeros(60, dtype=np.float32)
+    loudness[18:23] = 10
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["clipper.py", str(video), "--no-transcribe", "--no-chat", "--dry-run",
+         "--out", str(output), "--length", "10", "--min-length", "5", "--min-score", "0.1"],
+    )
+    monkeypatch.setattr(clipper, "need", lambda tool: None)
+    monkeypatch.setattr(clipper, "duration", lambda source: 60)
+    monkeypatch.setattr(
+        clipper,
+        "cache_load",
+        lambda source: (tmp_path / "cache.json", {"key": "synthetic", "loud": loudness.tolist()}),
+    )
+    monkeypatch.setattr(
+        clipper,
+        "render",
+        lambda *args, **kwargs: pytest.fail("dry-run must not render clips"),
+    )
+
+    clipper.main()
+
+    assert sorted(path.name for path in output.iterdir()) == ["candidates.json"]
+    assert json.loads((output / "candidates.json").read_text())
+
+
 def test_gemini_reranks_without_changing_candidate_timestamps(monkeypatch, tmp_path):
     class FakePart:
         @staticmethod
@@ -103,10 +167,15 @@ def test_gemini_reranks_without_changing_candidate_timestamps(monkeypatch, tmp_p
     monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
+    video = tmp_path / "recording.mp4"
+    video.write_bytes(b"synthetic-video-content")
+    extracted_frames = []
+
     def fake_ffmpeg(command, **kwargs):
         output = command[-1]
         with open(output, "wb") as frame:
             frame.write(b"synthetic-frame")
+        extracted_frames.append(output)
         return types.SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(clipper.subprocess, "run", fake_ffmpeg)
@@ -119,13 +188,17 @@ def test_gemini_reranks_without_changing_candidate_timestamps(monkeypatch, tmp_p
     ]
 
     ranked = clipper.gemini_review(
-        "unused.mp4", moments, [], tmp_path, "fake-model"
+        video, moments, [], tmp_path, "fake-model"
     )
 
     assert ranked[0]["peak"] == 35.0
     assert [
         (moment["start"], moment["end"], moment["peak"]) for moment in moments
     ] == original_timestamps
+    assert len(extracted_frames) == 6
+
+    clipper.gemini_review(video, moments, [], tmp_path, "fake-model")
+    assert len(extracted_frames) == 6
 
 
 def test_gemini_falls_back_when_api_key_is_missing(monkeypatch, tmp_path):
@@ -169,6 +242,8 @@ def test_gemini_falls_back_when_request_fails(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "google", fake_google)
     monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    video = tmp_path / "recording.mp4"
+    video.write_bytes(b"synthetic-video-content")
 
     def fake_ffmpeg(command, **kwargs):
         with open(command[-1], "wb") as frame:
@@ -178,4 +253,4 @@ def test_gemini_falls_back_when_request_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(clipper.subprocess, "run", fake_ffmpeg)
     candidates = [{"start": 1, "end": 2, "peak": 1.5, "rank": 1}]
 
-    assert clipper.gemini_review("unused.mp4", candidates, [], tmp_path, "model") is candidates
+    assert clipper.gemini_review(video, candidates, [], tmp_path, "model") is candidates

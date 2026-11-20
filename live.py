@@ -567,6 +567,11 @@ def main():
         p.error("--crop-x must be between 0 (left) and 1 (right); use --reframe fit to keep the full source visible")
     if not 0 < a.visual_fps <= 2:
         p.error("--visual-fps must be greater than 0 and at most 2")
+    if a.count < 1 or a.length < 1 or a.min_length < 1 or a.lead < 0:
+        p.error("--count, --length, and --min-length must be positive; --lead cannot be negative")
+    cam = clipper.parse_cam(a.cam) if a.cam else None
+    if a.reframe == "stack" and (a.cut or a.auto_clip) and not cam:
+        p.error("the stack layout needs --cam x:y:w:h with a positive rectangle inside the frame")
     a.rubric_weights = clipper.parse_rubric_weights(a.rubric_weights)
     if a.gemini_review:
         a.visual_scan = True

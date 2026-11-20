@@ -19,6 +19,8 @@ credentials*.json
 *token*.json
 secrets/
 *.clipcache.json
+*.clipcache.json.tmp
+.stream-to-shorts-cache/
 .env
 .env.*
 !.env.example

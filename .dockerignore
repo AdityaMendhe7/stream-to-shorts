@@ -16,6 +16,7 @@ client_secret*.json
 token*.json
 credentials*.json
 *.clipcache.json
+.stream-to-shorts-cache/
 *.mp4
 *.webm
 *.mkv

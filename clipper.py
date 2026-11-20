@@ -12,6 +12,7 @@ Usage:
     python clipper.py my_stream.mp4 --no-transcribe        # audio only, no captions
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -92,10 +93,14 @@ def run(cmd, cwd=None):
 
 
 def need(tool):
+    executable = shutil.which(tool)
+    if not executable:
+        sys.exit(f"Required tool '{tool}' was not found on PATH. Install FFmpeg and ensure "
+                 "both ffmpeg and ffprobe are available.")
     try:
-        subprocess.run([tool, "-version"], capture_output=True, check=True)
-    except Exception:
-        sys.exit(f"'{tool}' not found. Install ffmpeg (https://ffmpeg.org) and add it to PATH.")
+        subprocess.run([executable, "-version"], capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        sys.exit(f"Found '{tool}' at {executable}, but could not run it: {exc}")
 
 
 def download(url, dest_dir, want_chat=True, max_height=1080):
@@ -151,7 +156,13 @@ def download(url, dest_dir, want_chat=True, max_height=1080):
 def duration(video):
     out = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                "-of", "default=nw=1:nk=1", str(video)])
-    return float(out.strip())
+    try:
+        value = float(out.strip())
+    except ValueError:
+        sys.exit(f"Could not read a video duration from {video}. Check that this is a valid video file.")
+    if not np.isfinite(value) or value <= 0:
+        sys.exit(f"Video has an invalid duration ({out.strip()!r}): {video}")
+    return value
 
 
 # ---------- detection ----------
@@ -231,11 +242,19 @@ def merge_windows(wins):
     return [(a, b) for a, b in out]
 
 
+def video_sha256(video):
+    """Return a content hash so cached analysis is invalidated when file bytes change."""
+    digest = hashlib.sha256()
+    with Path(video).open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def cache_load(video):
-    """Analysis is saved next to the video so re-running (new layout, title...) is quick."""
+    """Load analysis saved next to the source video, keyed by its full content hash."""
     path = video.parent / (video.name + ".clipcache.json")
-    st = video.stat()
-    key = f"{st.st_size}-{int(st.st_mtime)}"
+    key = video_sha256(video)
     try:
         d = json.loads(path.read_text())
         if d.get("key") == key:
@@ -247,7 +266,9 @@ def cache_load(video):
 
 def cache_save(path, cache):
     try:
-        path.write_text(json.dumps(cache))
+        temp = path.with_suffix(path.suffix + ".tmp")
+        temp.write_text(json.dumps(cache))
+        temp.replace(path)
     except OSError:
         pass
 
@@ -432,7 +453,8 @@ def parse_rubric_weights(text):
         sys.exit("--rubric-weights must be a JSON object of known rubric dimensions and nonnegative numbers.")
 
 
-def gemini_review(video, moments, segments, workdir, model, rubric_weights=None):
+def gemini_review(video, moments, segments, workdir, model, rubric_weights=None,
+                  cache_key=None):
     """Optionally score candidate transcripts and a few sampled frames with Gemini.
 
     Only selected JPEG frames and the nearby transcript are sent; the source
@@ -452,6 +474,12 @@ def gemini_review(video, moments, segments, workdir, model, rubric_weights=None)
     if not moments:
         return moments
     rubric_weights = rubric_weights or RUBRIC_WEIGHTS
+    cache_key = cache_key or video_sha256(video)
+    frame_cache = Path(video).parent / ".stream-to-shorts-cache" / cache_key / "gemini-frames"
+    try:
+        frame_cache.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        frame_cache = None
 
     # Bound API cost and image upload volume on long recordings.
     review_limit = min(12, len(moments))
@@ -471,18 +499,26 @@ def gemini_review(video, moments, segments, workdir, model, rubric_weights=None)
         for label, sec in (("before", max(0.0, start + 0.5)),
                            ("event", peak),
                            ("after", max(start, end - 0.5))):
-            jpg = Path(workdir) / f"gemini_{i}_{label}.jpg"
-            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss",
-                   f"{sec:.2f}", "-i", str(Path(video).resolve()), "-frames:v", "1",
-                   "-vf", "scale=640:-2", "-q:v", "5", "-y", str(jpg)]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
-            if proc.returncode == 0 and jpg.exists() and jpg.stat().st_size:
+            frame_id = hashlib.sha256(
+                f"{start:.2f}|{end:.2f}|{peak:.2f}|{label}|{sec:.2f}".encode()
+            ).hexdigest()[:20]
+            cached = frame_cache / f"{frame_id}.jpg" if frame_cache else None
+            jpg = cached or (Path(workdir) / f"gemini_{i}_{label}.jpg")
+            if not jpg.exists() or not jpg.stat().st_size:
+                cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss",
+                       f"{sec:.2f}", "-i", str(Path(video).resolve()), "-frames:v", "1",
+                       "-vf", "scale=640:-2", "-q:v", "5", "-y", str(jpg)]
+                proc = subprocess.run(cmd, capture_output=True, text=True)
+            else:
+                proc = None
+            if (proc is None or proc.returncode == 0) and jpg.exists() and jpg.stat().st_size:
                 parts.append(types.Part.from_bytes(data=jpg.read_bytes(), mime_type="image/jpeg"))
                 parts.append(f"Candidate {i}, {label} frame at {sec:.2f}s.")
-                try:
-                    jpg.unlink()
-                except OSError:
-                    pass
+                if cached is None:
+                    try:
+                        jpg.unlink()
+                    except OSError:
+                        pass
 
     prompt = (
         "Review the candidate records and their labeled sampled frames for short-form "
@@ -860,13 +896,15 @@ def render(video, clip, out_path, layout, captions, workdir, brand=None, cam=Non
 
 def parse_cam(text):
     try:
-        v = tuple(float(x) for x in text.split(":"))
-        assert len(v) == 4 and all(0 <= x <= 1 for x in v) and v[0] + v[2] <= 1.001 \
-            and v[1] + v[3] <= 1.001
-        return v
-    except Exception:
+        values = tuple(float(x) for x in text.split(":"))
+        if (len(values) != 4 or not all(np.isfinite(x) and 0 <= x <= 1 for x in values)
+                or values[2] == 0 or values[3] == 0
+                or values[0] + values[2] > 1 or values[1] + values[3] > 1):
+            raise ValueError
+        return values
+    except (ValueError, TypeError):
         sys.exit("--cam must be x:y:w:h as fractions of the frame, e.g. 0.72:0.62:0.28:0.38 "
-                 "for a facecam in the bottom-right corner")
+                 "with positive width/height fully inside the frame")
 
 
 def main():
@@ -906,6 +944,8 @@ def main():
                    help="independently scan the whole video for visual-change candidates (local, no API)")
     p.add_argument("--visual-fps", type=float, default=0.5,
                    help="visual scan sampling rate in frames/sec (default 0.5; max 2)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="write clips/candidates.json without rendering or uploading clips")
     p.add_argument("--gemini-review", action="store_true",
                    help="rank a larger candidate pool with Gemini using transcript excerpts and sampled frames; sends these to Google")
     p.add_argument("--gemini-model", default="gemini-3.8-flash",
@@ -925,9 +965,13 @@ def main():
     need("ffprobe")
     cam = parse_cam(a.cam) if a.cam else None
     if not 0 <= a.crop_x <= 1:
-        sys.exit("--crop-x must be between 0 (left) and 1 (right). Use --reframe fit to keep the full source visible.")
+        p.error("--crop-x must be between 0 (left) and 1 (right); use --reframe fit to keep the full source visible")
     if not 0 < a.visual_fps <= 2:
-        sys.exit("--visual-fps must be greater than 0 and at most 2.")
+        p.error("--visual-fps must be greater than 0 and at most 2")
+    if a.count < 1 or a.length < 1 or a.min_length < 1 or a.lead < 0:
+        p.error("--count, --length, and --min-length must be positive; --lead cannot be negative")
+    if a.candidates is not None and a.candidates < 1:
+        p.error("--candidates must be at least 1")
     rubric_weights = parse_rubric_weights(a.rubric_weights)
     if a.gemini_review:
         # Gemini review includes visual evidence, so also generate candidates
@@ -994,9 +1038,17 @@ def main():
         segments = []
         if not a.no_transcribe:
             if a.full_transcribe:
-                print(f"Transcribing the WHOLE video with Whisper ({a.model})... "
-                      "this can take hours", flush=True)
-                segments = transcribe(get_wav(), a.model, lang)
+                transcript_key = f"full|{a.model}|{lang}"
+                transcripts = cache.setdefault("transcripts", {})
+                if transcript_key in transcripts:
+                    print("Using the saved full transcript for this video.")
+                    segments = transcripts[transcript_key]
+                else:
+                    print(f"Transcribing the WHOLE video with Whisper ({a.model})... "
+                          "this can take hours", flush=True)
+                    segments = transcribe(get_wav(), a.model, lang)
+                    transcripts[transcript_key] = segments
+                    cache_save(cpath, cache)
             else:
                 # Shortlist from independent audio/chat/visual detectors, then
                 # transcribe only those regions and rank again with speech evidence.
@@ -1027,9 +1079,14 @@ def main():
             moment.update(window)
         if a.gemini_review:
             moments = gemini_review(video, moments, segments, tmp, a.gemini_model,
-                                    rubric_weights)
+                                    rubric_weights, cache_key=cache["key"])
         all_candidates = moments[:]
         moments = moments[:a.count]
+        if a.dry_run:
+            candidate_path = out_dir / "candidates.json"
+            candidate_path.write_text(json.dumps(all_candidates, indent=2))
+            print(f"Dry run complete. Candidate list written to {candidate_path}.")
+            return
         print(f"Found {len(moments)} moments (best first). Rendering...", flush=True)
 
         brand = None
