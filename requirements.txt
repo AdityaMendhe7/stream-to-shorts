@@ -1,0 +1,6 @@
+numpy
+faster-whisper
+yt-dlp
+pillow
+google-api-python-client
+google-auth-oauthlib
