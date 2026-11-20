@@ -27,3 +27,4 @@ credentials*.json
 .env.*
 !.env.example
 Wallpaper gta6.jpeg
+jobs/

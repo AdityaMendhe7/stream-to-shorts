@@ -17,3 +17,22 @@ services:
       - ./models:/data/models
       - ./secrets:/run/secrets
     command: ["--help"]
+
+  ui:
+    build:
+      context: .
+    image: stream-to-shorts:local
+    init: true
+    entrypoint: ["python", "/data/web_app.py"]
+    command: []
+    environment:
+      STREAM_TO_SHORTS_HOST: 0.0.0.0
+      STREAM_TO_SHORTS_PORT: 8765
+      STREAM_TO_SHORTS_JOBS: /data/jobs
+      HF_HOME: /data/models
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./jobs:/data/jobs
+      - ./models:/data/models

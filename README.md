@@ -35,6 +35,14 @@ Run the clipper on a local recording or supported URL:
 python clipper.py gameplay.mp4 --visual-scan --count 5
 ```
 
+Or start the local web UI:
+
+```bash
+python web_app.py
+```
+
+Open <http://127.0.0.1:8765>, upload an MP4 or paste a YouTube, Twitch, or Kick VOD link, choose how many shorts to generate, then click **Generate Shorts**. The page shows processing stages, elapsed time, and the resulting playable/downloadable clips. It keeps the current job visible after a browser refresh while the server remains running. Do not open `web/index.html` directly; run `web_app.py` so the UI can reach the backend. The server binds to localhost by default and is not configured for public internet access.
+
 Rendered clips and `clips/candidates.json` are written to `clips/`. The default layout is portrait 9:16 at 1080×1920. Captions are burned in when a transcript is available; use `--no-captions` to omit them.
 
 For an analysis-only run that does not render or upload clips:
@@ -99,6 +107,14 @@ python clipper.py gameplay.mp4 --reframe crop --crop-x 0.7
 ```
 
 The bottom handle defaults to `@gtasixviralclips`; change it with `--handle` or omit it with `--no-brand`. The video title is not overlaid.
+
+## Run the web UI with Docker
+
+```bash
+docker compose up --build ui
+```
+
+Then open <http://127.0.0.1:8765>. Uploaded videos and generated clips persist under `jobs/`; downloaded speech models persist under `models/`. The UI service is published only on localhost by default.
 
 ## Run with Docker
 

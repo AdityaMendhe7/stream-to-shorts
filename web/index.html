@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101116">
+  <title>Stream to Shorts</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="file-warning hidden" id="file-warning"></div>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">S</span><span>stream<span class="brand-light">to</span>shorts</span></a>
+    <span class="local-badge"><span></span> LOCAL PROCESSING</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">YOUR STREAM, CUT DOWN</p>
+      <h1>Find the moments<br><span>worth sharing.</span></h1>
+      <p class="intro">Drop in a recording or paste a video link. We’ll find standout moments and turn them into vertical shorts.</p>
+    </section>
+
+    <section class="workspace" aria-label="Create shorts">
+      <div class="source-tabs" role="tablist" aria-label="Video source">
+        <button class="tab active" id="upload-tab" role="tab" aria-selected="true" aria-controls="upload-panel">Upload video</button>
+        <button class="tab" id="link-tab" role="tab" aria-selected="false" aria-controls="link-panel">Paste a link</button>
+      </div>
+
+      <div class="source-panel" id="upload-panel" role="tabpanel" aria-labelledby="upload-tab">
+        <label class="dropzone" id="dropzone" for="video-file">
+          <span class="upload-icon" aria-hidden="true">↑</span>
+          <strong id="file-label">Choose an MP4 video</strong>
+          <span class="muted">or drag and drop it here</span>
+          <span class="file-hint">The video is processed on this computer</span>
+          <input id="video-file" type="file" accept="video/mp4,.mp4" hidden>
+        </label>
+      </div>
+      <div class="source-panel hidden" id="link-panel" role="tabpanel" aria-labelledby="link-tab">
+        <label class="field-label" for="video-url">Video or VOD URL</label>
+        <input class="url-input" id="video-url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="url">
+        <p class="field-note">YouTube, Twitch, or Kick recorded videos and VODs. Active live streams aren’t supported.</p>
+      </div>
+
+      <details class="settings">
+        <summary>Clip settings <span class="settings-summary">5 shorts · 30 sec · Fit</span></summary>
+        <div class="settings-grid">
+          <label>Number of shorts <input id="count" type="number" min="1" max="20" step="1" value="5" inputmode="numeric" aria-describedby="count-hint"><span class="setting-hint" id="count-hint">Choose 1–20 shorts</span></label>
+          <label>Max clip length <select id="length"><option>20</option><option selected>30</option><option>45</option><option>60</option></select></label>
+          <label>Vertical framing <select id="reframe"><option value="fit" selected>Fit full video</option><option value="crop">Fill frame</option><option value="square">Center crop</option></select></label>
+          <label class="check-setting"><input id="visual-scan" type="checkbox" checked> Scan for visual changes <span class="hint">Can take a long time on long videos</span></label>
+        </div>
+      </details>
+
+      <button class="generate" id="generate" type="button"><span>Generate Shorts</span><span aria-hidden="true">↗</span></button>
+      <p class="privacy-note">Your video stays on your computer unless you submit a video link, which is downloaded for processing.</p>
+    </section>
+
+    <section class="job hidden" id="job" aria-live="polite">
+      <div class="processing-hero">
+        <div class="processing-copy">
+          <div class="job-heading"><span class="spinner" id="spinner"></span><div><p class="eyebrow" id="job-status">WORKING</p><h2 id="job-stage">Preparing your video…</h2></div></div>
+          <p class="job-message" id="job-message">Long recordings can take a while to analyze and render.</p>
+          <div class="elapsed"><span>TIME ELAPSED</span><strong id="elapsed">00:00</strong></div>
+        </div>
+        <div class="processing-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+          <div class="art-core">▶</div>
+          <div class="sound-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <span class="art-caption">MOMENT RADAR</span>
+        </div>
+      </div>
+      <ol class="job-steps" id="job-steps"></ol>
+      <div class="processing-tip"><span>WHILE YOU WAIT</span><p id="processing-tip-text">Your video is being analyzed locally. You can leave this tab open while it works.</p></div>
+      <div class="upload-progress hidden" id="upload-progress"><div id="upload-progress-bar"></div></div>
+      <div class="log-panel hidden" id="log-panel"><div class="log-title">Processing details</div><pre id="job-log"></pre></div>
+    </section>
+
+    <section class="results hidden" id="results">
+      <div class="results-heading"><div><p class="eyebrow">READY TO WATCH</p><h2>Your shorts</h2></div><span id="result-count" class="result-count"></span></div>
+      <div class="clip-grid" id="clip-grid"></div>
+    </section>
+  </main>
+  <footer>Stream to Shorts <span>·</span> Runs locally on your computer</footer>
+  <script src="app.js" defer></script>
+</body>
+</html>
