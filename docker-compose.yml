@@ -1,0 +1,19 @@
+services:
+  clipper:
+    build:
+      context: .
+    image: stream-to-shorts:local
+    init: true
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      YOUTUBE_CLIENT_SECRET_PATH: /run/secrets/client_secret.json
+      YOUTUBE_TOKEN_PATH: /run/secrets/token.json
+      HF_HOME: /models
+    volumes:
+      - ./input:/input:ro
+      - ./clips:/app/clips
+      - ./downloads:/app/downloads
+      - ./live:/app/live
+      - ./models:/models
+      - ./secrets:/run/secrets
+    command: ["clipper.py", "--help"]

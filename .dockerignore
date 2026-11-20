@@ -1,0 +1,26 @@
+.git
+.github
+.gitignore
+.dockerignore
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+downloads/
+clips/
+live/
+models/
+input/
+secrets/
+client_secret.json
+token.json
+credentials*.json
+*.mp4
+*.webm
+*.mkv
+*.mov
+*.part
+.env
+.env.*
+!.env.example
+Wallpaper gta6.jpeg

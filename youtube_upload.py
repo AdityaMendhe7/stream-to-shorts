@@ -1,11 +1,12 @@
 """YouTube uploader for clipper.py (YouTube Data API v3, OAuth desktop flow)."""
 import sys
+import os
 from pathlib import Path
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 HERE = Path(__file__).resolve().parent
-SECRETS = HERE / "client_secret.json"
-TOKEN = HERE / "token.json"
+SECRETS = Path(os.environ.get("YOUTUBE_CLIENT_SECRET_PATH", HERE / "client_secret.json"))
+TOKEN = Path(os.environ.get("YOUTUBE_TOKEN_PATH", HERE / "token.json"))
 _service = None
 
 
@@ -32,8 +33,8 @@ def _get_service():
                 creds = None  # token revoked/expired -> sign in again
         if not creds or not creds.valid:
             if not SECRETS.exists():
-                sys.exit(f"Missing {SECRETS.name}. Put your Google OAuth client file "
-                         f"next to clipper.py (see setup steps).")
+                sys.exit(f"Missing YouTube OAuth client file at {SECRETS}. Set "
+                         "YOUTUBE_CLIENT_SECRET_PATH or place client_secret.json next to the scripts.")
             flow = InstalledAppFlow.from_client_secrets_file(str(SECRETS), SCOPES)
             creds = flow.run_local_server(port=0)
         TOKEN.write_text(creds.to_json())

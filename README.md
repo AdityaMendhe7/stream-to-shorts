@@ -2,6 +2,60 @@
 
 This project finds gameplay moments using separate audio/chat/transcript signals and an optional whole-video visual-change scan. The detectors do not need to agree: either can nominate a moment. Gemini review, when enabled, ranks a bounded candidate list; it cannot create or change clip timestamps.
 
+## Run with Docker
+
+Docker packages the current command-line backend with FFmpeg and its Python dependencies. It does not add a web API or UI yet. Docker Desktop must be running. From the project folder:
+
+```bash
+mkdir -p input clips downloads live models secrets
+docker compose build
+docker compose run --rm clipper clipper.py --help
+```
+
+Put a source video in `input/`, then run the clipper with its mounted container path:
+
+```bash
+docker compose run --rm clipper clipper.py /input/gameplay.mp4 --visual-scan --count 5
+```
+
+For a URL, the downloads directory is persistent:
+
+```bash
+docker compose run --rm clipper clipper.py "https://www.youtube.com/watch?v=VIDEO_ID" --visual-scan --count 5
+```
+
+For a saved live stream, session data is kept in `live/`:
+
+```bash
+docker compose run --rm clipper live.py "LIVE_STREAM_URL" --auto-clip --visual-scan --count 5
+```
+
+The `clips/`, `downloads/`, `live/`, and `models/` directories are mounted from the host, so generated files and Whisper model downloads persist when the container exits. The source `input/` mount is read-only. CPU inference is used in the container; Docker Desktop on Mac does not expose the Mac's Apple GPU to a Linux container.
+
+### Optional Gemini review in Docker
+
+Create a local `.env` file (it is ignored by Git) containing:
+
+```dotenv
+GEMINI_API_KEY=your-api-key
+```
+
+Then add `--gemini-review` to a `clipper.py` or `live.py` command. The API key is passed at runtime and is not copied into the image.
+
+### YouTube upload credentials in Docker
+
+To keep OAuth credentials out of the image and Git, put `client_secret.json` and a previously authorized `token.json` in the local `secrets/` folder. Authorize once using the existing non-Docker local setup, then copy the resulting token into `secrets/token.json`. The Compose setup mounts that folder at runtime. Add `--upload-youtube` to the clipper command to upload; uploads default to private unless you choose another privacy setting. Do not commit `secrets/`.
+
+### Build and publish
+
+Build locally with `docker compose build`. GitHub Actions also builds `linux/amd64` and `linux/arm64` images and publishes them to GitHub Container Registry on changes to the backend or Docker files on `main`. The image tags are `latest` and the commit SHA. After the first successful workflow, the package can be pulled with:
+
+```bash
+docker pull ghcr.io/adityamendhe7/stream-to-shorts:latest
+```
+
+GitHub may initially mark a newly published package private. Set the package visibility to public in the repository owner's GitHub Packages settings if you want unauthenticated pulls.
+
 ## Output framing
 
 Rendered clips are 1080×1920 (9:16), H.264/AAC MP4. `fit` is the safe default and preserves the full input frame over a blurred background. If a separate facecam is present, `stack` can show the gameplay and facecam together; pass its rectangle as normalized `x:y:w:h` fractions. `crop` fills the portrait frame and can be shifted horizontally with `--crop-x` from 0 (left) to 1 (right).
