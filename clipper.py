@@ -13,6 +13,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -763,11 +764,13 @@ def make_captions(segments, start, end, outdir, layout="fit"):
         cursor = b
     lines.append((blank, 0.5))
     lst = outdir / "captions.txt"
-    q = lambda path: str(path.resolve()).replace("'", "'\\''")
+    def quote_concat_path(path):
+        return str(path.resolve()).replace("'", "'\\''")
+
     with open(lst, "w") as f:
         for png, dur in lines:
-            f.write(f"file '{q(png)}'\nduration {dur:.3f}\n")
-        f.write(f"file '{q(blank)}'\n")  # concat needs the last file repeated
+            f.write(f"file '{quote_concat_path(png)}'\nduration {dur:.3f}\n")
+        f.write(f"file '{quote_concat_path(blank)}'\n")  # repeat final file for concat
     return lst
 
 
@@ -918,7 +921,8 @@ def main():
     a = p.parse_args()
     lang = None if a.lang == "auto" else a.lang
 
-    need("ffmpeg"); need("ffprobe")
+    need("ffmpeg")
+    need("ffprobe")
     cam = parse_cam(a.cam) if a.cam else None
     if not 0 <= a.crop_x <= 1:
         sys.exit("--crop-x must be between 0 (left) and 1 (right). Use --reframe fit to keep the full source visible.")
@@ -939,7 +943,8 @@ def main():
         chat_path = Path(a.chat_file)
     if not video.exists():
         sys.exit(f"File not found: {video}")
-    out_dir = Path(a.out); out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(a.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     total_secs = duration(video)
     n_secs = int(total_secs)
