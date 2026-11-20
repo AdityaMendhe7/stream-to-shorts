@@ -9,25 +9,25 @@ Docker packages the current command-line backend with FFmpeg and its Python depe
 ```bash
 mkdir -p input clips downloads live models secrets
 docker compose build
-docker compose run --rm clipper clipper.py --help
+docker compose run --rm clipper --help
 ```
 
 Put a source video in `input/`, then run the clipper with its mounted container path:
 
 ```bash
-docker compose run --rm clipper clipper.py /input/gameplay.mp4 --visual-scan --count 5
+docker compose run --rm clipper /data/input/gameplay.mp4 --visual-scan --count 5
 ```
 
 For a URL, the downloads directory is persistent:
 
 ```bash
-docker compose run --rm clipper clipper.py "https://www.youtube.com/watch?v=VIDEO_ID" --visual-scan --count 5
+docker compose run --rm clipper "https://www.youtube.com/watch?v=VIDEO_ID" --visual-scan --count 5
 ```
 
 For a saved live stream, session data is kept in `live/`:
 
 ```bash
-docker compose run --rm clipper live.py "LIVE_STREAM_URL" --auto-clip --visual-scan --count 5
+docker compose run --rm --entrypoint python clipper /data/live.py "LIVE_STREAM_URL" --auto-clip --visual-scan --count 5
 ```
 
 The `clips/`, `downloads/`, `live/`, and `models/` directories are mounted from the host, so generated files and Whisper model downloads persist when the container exits. The source `input/` mount is read-only. CPU inference is used in the container; Docker Desktop on Mac does not expose the Mac's Apple GPU to a Linux container.

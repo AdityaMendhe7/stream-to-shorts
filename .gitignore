@@ -1,6 +1,8 @@
 # Generated media and large source downloads
 downloads/
 clips/
+live/
+models/
 Wallpaper gta6.jpeg
 *.mp4
 *.webm
@@ -10,10 +12,13 @@ Wallpaper gta6.jpeg
 
 # Secrets and local credentials
 client_secret.json
+client_secret*.json
 token.json
+token*.json
 credentials*.json
 *token*.json
 secrets/
+*.clipcache.json
 .env
 .env.*
 !.env.example

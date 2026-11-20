@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stream-to-shorts"
+version = "0.2.0"
+description = "Local-first gameplay clipper for YouTube Shorts and Instagram Reels"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy==2.5.4",
+  "faster-whisper==1.2.1",
+  "yt-dlp==2026.10.26",
+  "pillow==12.3.0",
+  "google-api-python-client==2.202.0",
+  "google-auth-oauthlib==1.5.0",
+]
+
+[project.optional-dependencies]
+gemini = ["google-genai==3.6.1"]
+dev = ["pytest==9.1.1", "ruff==0.15.7"]
+
+[tool.setuptools]
+py-modules = ["clipper", "live", "youtube_upload"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+

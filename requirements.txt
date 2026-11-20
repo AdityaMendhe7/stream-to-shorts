@@ -1,6 +1,6 @@
-numpy
-faster-whisper
-yt-dlp
-pillow
-google-api-python-client
-google-auth-oauthlib
+numpy==2.5.4
+faster-whisper==1.2.1
+yt-dlp==2026.10.26
+pillow==12.3.0
+google-api-python-client==2.202.0
+google-auth-oauthlib==1.5.0

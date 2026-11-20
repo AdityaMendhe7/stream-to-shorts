@@ -8,12 +8,12 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       YOUTUBE_CLIENT_SECRET_PATH: /run/secrets/client_secret.json
       YOUTUBE_TOKEN_PATH: /run/secrets/token.json
-      HF_HOME: /models
+      HF_HOME: /data/models
     volumes:
-      - ./input:/input:ro
-      - ./clips:/app/clips
-      - ./downloads:/app/downloads
-      - ./live:/app/live
-      - ./models:/models
+      - ./input:/data/input:ro
+      - ./clips:/data/clips
+      - ./downloads:/data/downloads
+      - ./live:/data/live
+      - ./models:/data/models
       - ./secrets:/run/secrets
-    command: ["clipper.py", "--help"]
+    command: ["--help"]

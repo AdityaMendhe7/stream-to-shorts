@@ -12,9 +12,10 @@ live/
 models/
 input/
 secrets/
-client_secret.json
-token.json
+client_secret*.json
+token*.json
 credentials*.json
+*.clipcache.json
 *.mp4
 *.webm
 *.mkv

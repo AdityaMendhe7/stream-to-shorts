@@ -1,15 +1,9 @@
-name: Publish Docker image
+name: Build and publish Docker image
 
 on:
   push:
     branches: [main]
-    paths:
-      - "Dockerfile"
-      - ".dockerignore"
-      - "docker-compose.yml"
-      - "requirements.txt"
-      - "*.py"
-      - ".github/workflows/publish-image.yml"
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -40,9 +34,10 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/adityamendhe7/stream-to-shorts
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
             type=sha
 
       - name: Build and publish multi-platform image
