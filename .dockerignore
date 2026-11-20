@@ -1,5 +1,6 @@
 .git
 .github
+tests/
 .gitignore
 .dockerignore
 __pycache__/

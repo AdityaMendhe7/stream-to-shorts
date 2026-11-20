@@ -524,7 +524,8 @@ def cut_session(sdir, a):
                 start = max(0.0, m["peak"] - a.lead)
                 clip = {"start": start, "end": min(total, start + a.length)}
             caps = (clipper.make_captions(segments, clip["start"], clip["end"],
-                                          tmp / f"caps_{i}", a.reframe) if segments else None)
+                                          tmp / f"caps_{i}", a.reframe)
+                    if segments and not a.no_captions else None)
             name = out / f"clip_{i:02d}_{hms(m['peak']).replace(':', '-')}.mp4"
             clipper.render(rec, clip, name, a.reframe, caps, tmp, brand, cam, a.crop_x)
             print(f"  {name.name}  {clip['end'] - clip['start']:.0f}s  (rank {m['rank']})")
@@ -563,6 +564,8 @@ def main():
     p.add_argument("--model", default="base", help="whisper model: tiny/base/small")
     p.add_argument("--lang", default="en", help="speech language code, or 'auto'")
     p.add_argument("--no-transcribe", action="store_true", help="skip live transcription")
+    p.add_argument("--no-captions", action="store_true",
+                   help="skip burned-in captions when cutting a saved session")
     p.add_argument("--no-chat", action="store_true", help="don't read viewer chat")
     p.add_argument("--chat-delay", type=float, default=3.0,
                    help="seconds viewers take to react (default 3)")

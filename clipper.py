@@ -287,6 +287,29 @@ def cache_save(path, cache):
         pass
 
 
+def load_approved_candidates(path, video, source_hash, total_secs):
+    """Load a preview selection, refusing stale or out-of-range source timestamps."""
+    try:
+        manifest = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.exit(f"Could not read approved-candidate manifest {path}: {exc}")
+    if manifest.get("source") != Path(video).name or manifest.get("source_sha256") != source_hash:
+        sys.exit("The approved-candidate file belongs to a different or changed source video. "
+                 "Create a new preview from the current video.")
+    candidates = manifest.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        sys.exit("The approval manifest contains no approved candidates.")
+    for candidate in candidates:
+        try:
+            start, end, peak = (float(candidate[key]) for key in ("start", "end", "peak"))
+        except (KeyError, TypeError, ValueError):
+            sys.exit("The approval manifest has a candidate without numeric start/end/peak times.")
+        if (not all(np.isfinite(value) for value in (start, end, peak))
+                or start < 0 or end <= start or end > total_secs or not start <= peak <= end):
+            sys.exit("The approval manifest contains a candidate with invalid video boundaries.")
+    return candidates
+
+
 def transcribe_windows(get_wav, windows, model_size, lang, cache, cpath):
     """Transcribe only the given (start, end) second ranges. Finished ranges are cached."""
     store = cache.setdefault("transcripts", {})
@@ -991,6 +1014,8 @@ def main():
     p.add_argument("--model", default="base", help="whisper model: tiny/base/small/medium")
     p.add_argument("--lang", default="en", help="speech language code, or 'auto'")
     p.add_argument("--no-transcribe", action="store_true", help="audio-only, no captions")
+    p.add_argument("--no-captions", action="store_true",
+                   help="skip burned-in captions even when a transcript is available")
     p.add_argument("--candidates", type=int,
                    help="how many promising parts to transcribe (default: 3x --count, min 15)")
     p.add_argument("--full-transcribe", action="store_true",
@@ -1010,6 +1035,8 @@ def main():
                    help="write clips/candidates.json without rendering or uploading clips")
     p.add_argument("--evaluation-json",
                    help="write separate detector rankings for evaluation against labeled timestamps")
+    p.add_argument("--approved-json",
+                   help="render only candidates approved by preview.py; source hash must match")
     p.add_argument("--gemini-review", action="store_true",
                    help="rank a larger candidate pool with Gemini using transcript excerpts and sampled frames; sends these to Google")
     p.add_argument("--gemini-model", default="gemini-3.8-flash",
@@ -1036,6 +1063,8 @@ def main():
         p.error("--count, --length, and --min-length must be positive; --lead cannot be negative")
     if a.candidates is not None and a.candidates < 1:
         p.error("--candidates must be at least 1")
+    if a.approved_json and (a.dry_run or a.gemini_review):
+        p.error("--approved-json cannot be combined with --dry-run or --gemini-review")
     rubric_weights = parse_rubric_weights(a.rubric_weights)
     if a.gemini_review:
         # Gemini review includes visual evidence, so also generate candidates
@@ -1062,6 +1091,9 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         cpath, cache = cache_load(video)
+        approved_candidates = (load_approved_candidates(
+            a.approved_json, video, cache["key"], total_secs
+        ) if a.approved_json else None)
         wav_box = {}
 
         def get_wav():  # extracted only when really needed, and only once
@@ -1126,6 +1158,9 @@ def main():
                 for m in cands:
                     c = plan_clip(m["peak"], ctotal, total_secs, [], a.length, a.min_length, a.lead)
                     wins.append((max(0, int(c["start"]) - 6), min(n_secs, int(c["end"]) + 6)))
+                for candidate in approved_candidates or []:
+                    start, end = float(candidate["start"]), float(candidate["end"])
+                    wins.append((max(0, int(start) - 6), min(n_secs, int(end) + 6)))
                 wins = merge_windows(wins)
                 mins = sum(b - a for a, b in wins) / 60
                 print(f"Transcribing only the {len(wins)} most promising parts "
@@ -1136,14 +1171,17 @@ def main():
         pool_size = max(a.count, min(50, a.candidates or 3 * a.count))
         moments, total = pick_moments(
             parts, pool_size, a.length, a.min_score, {"chat": a.chat_weight})
+        if approved_candidates is not None:
+            moments = approved_candidates
         if not moments:
             sys.exit("No moments passed the threshold. Try a lower --min-score.")
         # Freeze locally computed, source-bounded clip windows before optional
         # model review. The model can rank candidates but cannot set timestamps.
         for moment in moments:
-            window = plan_clip(moment["peak"], total, total_secs, segments,
-                               a.length, a.min_length, a.lead)
-            moment.update(window)
+            if approved_candidates is None:
+                window = plan_clip(moment["peak"], total, total_secs, segments,
+                                   a.length, a.min_length, a.lead)
+                moment.update(window)
             if visual_raw is not None and moment["peak"] < len(visual_raw):
                 moment["visual_raw"] = round(float(visual_raw[moment["peak"]]), 2)
         merged_candidates = copy.deepcopy(moments)
@@ -1153,7 +1191,7 @@ def main():
         all_candidates = moments[:]
         for candidate in all_candidates:
             candidate["source"] = video.name
-        moments = moments[:a.count]
+        moments = moments if approved_candidates is not None else moments[:a.count]
         if a.evaluation_json:
             detector_parts = {
                 "audio": {name: parts[name] for name in ("loud", "speech") if name in parts},
@@ -1201,7 +1239,7 @@ def main():
             c = plan_clip(m["peak"], total, total_secs, segments, a.length, a.min_length, a.lead)
             c.update(m)
             caps = (make_captions(segments, c["start"], c["end"], tmp / f"caps_{i}", a.reframe)
-                    if segments else None)
+                    if segments and not a.no_captions else None)
             name = out_dir / f"clip_{i:02d}_{int(c['start'])}s.mp4"
             render(video, c, name, a.reframe, caps, tmp, brand, cam, a.crop_x)
             c["file"] = str(name)
@@ -1220,7 +1258,8 @@ def main():
                     a.upload_youtube = False
 
     (out_dir / "clips.json").write_text(json.dumps(clips, indent=2))
-    (out_dir / "candidates.json").write_text(json.dumps(all_candidates, indent=2))
+    if approved_candidates is None:
+        (out_dir / "candidates.json").write_text(json.dumps(all_candidates, indent=2))
     print(f"Done in {(time.time() - t_start) / 60:.1f} min. Clips are in ./{out_dir}/  "
           "(clip_01 is the best)")
 
