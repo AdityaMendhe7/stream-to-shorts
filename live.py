@@ -224,6 +224,8 @@ class Live:
         (self.sdir / "transcript.json").write_text(json.dumps(self.segments))
         (self.sdir / "score.json").write_text(
             json.dumps([round(float(x), 2) for x in self.score_array()]))
+        (self.sdir / "loud.json").write_text(
+            json.dumps([round(float(x), 2) for x in self.loud]))
 
 
 # ---------- chat sources ----------
@@ -462,7 +464,12 @@ def cut_session(sdir, a):
         print(f"Scanning saved live recording for visual-change candidates "
               f"({a.visual_fps:g} frames/sec)...", flush=True)
         try:
-            visual = clipper.visual_change_scores(rec, int(total), a.visual_fps)
+            visual_raw = clipper.visual_change_scores(rec, int(total), a.visual_fps)
+            loud_file = sdir / "loud.json"
+            audio_scores = (np.asarray(json.loads(loud_file.read_text()), dtype=np.float32)
+                            if loud_file.exists()
+                            else clipper.video_audio_scores(rec, int(total)))
+            visual = clipper.combine_visual_audio_scores(visual_raw, audio_scores)
             vm, _ = clipper.pick_moments({"visual": visual}, max(a.count * 3, a.count),
                                          a.length, 1.0)
             for candidate in vm:
@@ -470,6 +477,8 @@ def cut_session(sdir, a):
                        for m in pool):
                     candidate["sources"] = ["visual"]
                     candidate["visual_only"] = True
+                    candidate["visual_raw"] = round(float(visual_raw[candidate["peak"]]), 2)
+                    candidate["visual"] = round(float(visual[candidate["peak"]]), 2)
                     pool.append(candidate)
         except Exception as e:
             print(f"  Visual scan unavailable; using audio/chat moments: {e}")

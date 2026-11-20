@@ -44,6 +44,37 @@ def test_agreement_increases_rank_over_raw_score():
     assert moments[0]["rank"] > moments[0]["score"]
 
 
+def test_scoring_defaults_match_existing_agreement_and_rubric_values():
+    assert clipper.RANKING_CONFIG["agreement_bonus"] == 0.25
+    assert clipper.RANKING_CONFIG["agreement_rank_bonus"] == 0.30
+    assert clipper.RUBRIC_WEIGHTS == {
+        "hook": 0.20,
+        "context": 0.15,
+        "intensity": 0.20,
+        "payoff": 0.15,
+        "pacing": 0.10,
+        "audio_evidence": 0.08,
+        "visual_evidence": 0.08,
+        "transcript_confidence": 0.04,
+    }
+
+
+def test_visual_audio_blend_preserves_quiet_visuals_and_suppresses_nearby_triggers():
+    visual = np.zeros(20, dtype=np.float32)
+    audio = np.zeros(20, dtype=np.float32)
+    visual[5] = 5
+    visual[6] = 4.5
+    visual[10] = 5
+    audio[6] = 5
+
+    combined = clipper.combine_visual_audio_scores(visual, audio)
+
+    assert combined[5] == 0
+    assert combined[6] == pytest.approx(4.5)
+    assert combined[10] == pytest.approx(3.25)
+    assert np.count_nonzero(combined) == 2
+
+
 def test_pick_moments_returns_candidates_in_descending_rank_order():
     speech = np.zeros(61, dtype=np.float32)
     speech[10] = 8
@@ -117,7 +148,8 @@ def test_dry_run_writes_candidates_without_rendering(monkeypatch, tmp_path):
         sys,
         "argv",
         ["clipper.py", str(video), "--no-transcribe", "--no-chat", "--dry-run",
-         "--out", str(output), "--length", "10", "--min-length", "5", "--min-score", "0.1"],
+         "--out", str(output), "--length", "10", "--min-length", "5", "--min-score", "0.1",
+         "--evaluation-json", str(tmp_path / "evaluation.json")],
     )
     monkeypatch.setattr(clipper, "need", lambda tool: None)
     monkeypatch.setattr(clipper, "duration", lambda source: 60)
@@ -136,6 +168,10 @@ def test_dry_run_writes_candidates_without_rendering(monkeypatch, tmp_path):
 
     assert sorted(path.name for path in output.iterdir()) == ["candidates.json"]
     assert json.loads((output / "candidates.json").read_text())
+    evaluation = json.loads((tmp_path / "evaluation.json").read_text())
+    assert set(evaluation["rankings"]) == {"audio", "chat", "visual", "merged", "gemini"}
+    assert evaluation["rankings"]["audio"]
+    assert evaluation["rankings"]["gemini"] is None
 
 
 def test_gemini_reranks_without_changing_candidate_timestamps(monkeypatch, tmp_path):

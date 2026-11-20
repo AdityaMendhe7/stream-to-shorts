@@ -21,7 +21,7 @@ gemini = ["google-genai==3.6.1"]
 dev = ["pytest==9.1.1", "ruff==0.15.7"]
 
 [tool.setuptools]
-py-modules = ["clipper", "live", "youtube_upload"]
+py-modules = ["clipper", "live", "youtube_upload", "evaluate"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

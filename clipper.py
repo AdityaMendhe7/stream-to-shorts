@@ -12,6 +12,7 @@ Usage:
     python clipper.py my_stream.mp4 --no-transcribe        # audio only, no captions
 """
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -21,12 +22,25 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import wave
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+
+
+CONFIG_PATH = Path(__file__).with_name("config.toml")
+try:
+    with CONFIG_PATH.open("rb") as _config_file:
+        CONFIG = tomllib.load(_config_file)
+except (OSError, tomllib.TOMLDecodeError) as exc:
+    raise RuntimeError(f"Could not load scoring defaults from {CONFIG_PATH}: {exc}") from exc
+
+RANKING_CONFIG = CONFIG["ranking"]
+VISUAL_CONFIG = CONFIG["visual_scan"]
+RUBRIC_WEIGHTS = CONFIG["gemini_rubric"]
 
 # Hype vocabulary. Strong reactions count a lot, everyday words that are only
 # sometimes a reaction ("no", "what", "go") count a little, and whole phrases or
@@ -425,11 +439,57 @@ def visual_change_scores(video, n_secs, sample_fps=0.5):
     return out
 
 
-RUBRIC_WEIGHTS = {
-    "hook": 0.20, "context": 0.15, "intensity": 0.20, "payoff": 0.15,
-    "pacing": 0.10, "audio_evidence": 0.08, "visual_evidence": 0.08,
-    "transcript_confidence": 0.04,
-}
+def combine_visual_audio_scores(visual_scores, audio_scores, suppression_seconds=None):
+    """Reward visual changes with nearby audio energy and suppress cut bursts.
+
+    Audio can boost a visual trigger by up to 35%, but a visually strong quiet
+    moment retains 65% of its score. Within each suppression window, only the
+    highest combined trigger remains eligible for candidate selection.
+    """
+    visual = np.asarray(visual_scores, dtype=np.float32)
+    audio = np.asarray(audio_scores if audio_scores is not None else [], dtype=np.float32)
+    if len(audio) < len(visual):
+        audio = np.pad(audio, (0, len(visual) - len(audio)))
+    cue = np.clip(audio[:len(visual)] / 5.0, 0.0, 1.0)
+    combined = visual * (float(VISUAL_CONFIG["audio_floor"])
+                         + float(VISUAL_CONFIG["audio_boost"]) * cue)
+    suppression = (int(VISUAL_CONFIG["suppression_seconds"])
+                   if suppression_seconds is None else max(0, int(suppression_seconds)))
+    peaks = np.flatnonzero(combined > 0)
+    if suppression == 0 or len(peaks) < 2:
+        return combined
+
+    kept = np.zeros_like(combined)
+    group = [int(peaks[0])]
+    for peak in peaks[1:]:
+        peak = int(peak)
+        if peak - group[-1] <= suppression:
+            group.append(peak)
+            continue
+        winner = max(group, key=lambda index: combined[index])
+        kept[winner] = combined[winner]
+        group = [peak]
+    winner = max(group, key=lambda index: combined[index])
+    kept[winner] = combined[winner]
+    return kept
+
+
+def video_audio_scores(video, n_secs):
+    """Get the same per-second loudness signal used by offline detection."""
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = Path(tmp) / "audio.wav"
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i",
+             str(Path(video).resolve()), "-vn", "-ac", "1", "-ar", "16000",
+             "-f", "wav", str(wav)],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0 or not wav.exists():
+            return np.zeros(n_secs, dtype=np.float32)
+        try:
+            return loudness_scores(wav, n_secs)
+        except (OSError, wave.Error, ValueError):
+            return np.zeros(n_secs, dtype=np.float32)
 
 
 def parse_rubric_weights(text):
@@ -590,7 +650,7 @@ def pick_moments(parts, count, length, min_score, weights=None):
     before blending so raw scale differences do not decide the ranking. Returns
     (moments, smoothed_total)."""
     k = np.ones(5) / 5
-    weights = weights or {}
+    weights = {**RANKING_CONFIG.get("weights", {}), **(weights or {})}
     sm = {name: np.convolve(normalize_signal(arr), k, mode="same") *
           max(0.0, float(weights.get(name, 1.0)))
           for name, arr in parts.items()
@@ -599,17 +659,19 @@ def pick_moments(parts, count, length, min_score, weights=None):
     # a smaller bonus; a quiet streamer does not veto a visual event.
     matrix = np.stack(list(sm.values())) if sm else np.zeros((1, 0), dtype=np.float32)
     strongest = np.max(matrix, axis=0)
-    total = strongest + 0.25 * (np.sum(matrix, axis=0) - strongest)
+    total = (strongest + float(RANKING_CONFIG["agreement_bonus"])
+             * (np.sum(matrix, axis=0) - strongest))
     sig = np.zeros(len(total), dtype=int)
     if "loud" in sm:
-        sig += (sm["loud"] >= 1.5).astype(int)
+        sig += (sm["loud"] >= float(RANKING_CONFIG["loud_threshold"])).astype(int)
     if "speech" in sm:
-        sig += (sm["speech"] >= 0.3).astype(int)
+        sig += (sm["speech"] >= float(RANKING_CONFIG["speech_threshold"])).astype(int)
     if "chat" in sm:
-        sig += (sm["chat"] >= 1.0).astype(int)
+        sig += (sm["chat"] >= float(RANKING_CONFIG["chat_threshold"])).astype(int)
     if "visual" in sm:
-        sig += (sm["visual"] >= 1.5).astype(int)
-    rank = total * (1 + 0.3 * np.maximum(sig - 1, 0))
+        sig += (sm["visual"] >= float(RANKING_CONFIG["visual_threshold"])).astype(int)
+    rank = total * (1 + float(RANKING_CONFIG["agreement_rank_bonus"])
+                    * np.maximum(sig - 1, 0))
     work = rank.copy()
     out = []
     while len(out) < count:
@@ -946,6 +1008,8 @@ def main():
                    help="visual scan sampling rate in frames/sec (default 0.5; max 2)")
     p.add_argument("--dry-run", action="store_true",
                    help="write clips/candidates.json without rendering or uploading clips")
+    p.add_argument("--evaluation-json",
+                   help="write separate detector rankings for evaluation against labeled timestamps")
     p.add_argument("--gemini-review", action="store_true",
                    help="rank a larger candidate pool with Gemini using transcript excerpts and sampled frames; sends these to Google")
     p.add_argument("--gemini-model", default="gemini-3.8-flash",
@@ -1019,14 +1083,17 @@ def main():
             cache["loud"] = [round(float(x), 2) for x in loud]
             cache_save(cpath, cache)
         parts = {"loud": loud}
+        visual_raw = None
         if a.visual_scan:
             print(f"Scanning whole video for visual changes at {a.visual_fps:g} frames/sec...",
                   flush=True)
             try:
-                parts["visual"] = visual_change_scores(video, n_secs, a.visual_fps)
+                visual_raw = visual_change_scores(video, n_secs, a.visual_fps)
+                parts["visual"] = combine_visual_audio_scores(visual_raw, loud)
                 print(f"  Visual scan found {int(np.count_nonzero(parts['visual']))} candidate seconds.")
             except Exception as e:
                 print(f"  Visual scan unavailable; continuing with audio/chat: {e}")
+                visual_raw = None
         if chat_path and not a.no_chat:
             msgs = parse_chat(chat_path)
             print(f"Chat: {len(msgs)} messages")
@@ -1077,11 +1144,47 @@ def main():
             window = plan_clip(moment["peak"], total, total_secs, segments,
                                a.length, a.min_length, a.lead)
             moment.update(window)
+            if visual_raw is not None and moment["peak"] < len(visual_raw):
+                moment["visual_raw"] = round(float(visual_raw[moment["peak"]]), 2)
+        merged_candidates = copy.deepcopy(moments)
         if a.gemini_review:
             moments = gemini_review(video, moments, segments, tmp, a.gemini_model,
                                     rubric_weights, cache_key=cache["key"])
         all_candidates = moments[:]
+        for candidate in all_candidates:
+            candidate["source"] = video.name
         moments = moments[:a.count]
+        if a.evaluation_json:
+            detector_parts = {
+                "audio": {name: parts[name] for name in ("loud", "speech") if name in parts},
+                "chat": {"chat": parts["chat"]} if "chat" in parts else {},
+                "visual": {"visual": parts["visual"]} if "visual" in parts else {},
+            }
+            evaluation_rankings = {}
+            for detector, signals in detector_parts.items():
+                detector_moments, detector_total = pick_moments(
+                    signals, pool_size, a.length, a.min_score,
+                    {"chat": a.chat_weight},
+                ) if signals else ([], np.zeros(0, dtype=np.float32))
+                for candidate in detector_moments:
+                    candidate.update(plan_clip(
+                        candidate["peak"], detector_total, total_secs, segments,
+                        a.length, a.min_length, a.lead,
+                    ))
+                    if detector == "visual" and visual_raw is not None:
+                        candidate["visual_raw"] = round(
+                            float(visual_raw[candidate["peak"]]), 2
+                        )
+                    candidate["source"] = video.name
+                evaluation_rankings[detector] = detector_moments
+            evaluation_rankings["merged"] = merged_candidates
+            evaluation_rankings["gemini"] = (all_candidates if a.gemini_review else None)
+            evaluation_path = Path(a.evaluation_json)
+            evaluation_path.parent.mkdir(parents=True, exist_ok=True)
+            evaluation_path.write_text(json.dumps({
+                "source": video.name,
+                "rankings": evaluation_rankings,
+            }, indent=2))
         if a.dry_run:
             candidate_path = out_dir / "candidates.json"
             candidate_path.write_text(json.dumps(all_candidates, indent=2))
